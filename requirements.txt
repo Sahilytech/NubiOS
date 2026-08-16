@@ -1,0 +1,8 @@
+PySide6>=6.8,<7
+
+# Development / packaging
+pytest>=8.0
+pyinstaller>=6.0
+
+# Optional voice support:
+# faster-whisper>=1.1
