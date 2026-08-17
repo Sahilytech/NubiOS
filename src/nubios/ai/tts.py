@@ -108,20 +108,19 @@ def _json_string(value: str) -> str:
 
 
 def _play_audio(path: Path) -> None:
-    """Play generated audio using the native Windows player or ffplay."""
-    if sys.platform == "win32" and path.suffix.lower() == ".wav":
-        import winsound
-
-        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC)
-        return
-
-    # MP3 playback is delegated to ffplay when available. NubiOS remains
-    # usable without it; the generated audio is still kept on disk.
+    """Play generated audio without making playback a hard runtime dependency."""
     try:
         subprocess.Popen(
             ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        return
     except (FileNotFoundError, OSError):
-        return None
+        pass
+
+    if sys.platform == "win32":
+        try:
+            os.startfile(str(path))
+        except OSError:
+            pass
