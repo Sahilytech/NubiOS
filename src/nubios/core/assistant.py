@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import threading
+
 from ..ai.provider import AIProvider
+from ..ai.tts import NoOpTTS, TTSProvider
 from ..automation.system import ApplicationRegistry, FileSearcher
 from ..config.settings import Settings
 from ..memory.database import Database
@@ -13,7 +16,13 @@ from .permissions import Permission, PermissionManager
 
 
 class Assistant:
-    def __init__(self, settings: Settings, ai: AIProvider, event_bus: EventBus | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        ai: AIProvider,
+        event_bus: EventBus | None = None,
+        tts: TTSProvider | None = None,
+    ) -> None:
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         self.settings = settings
         self.db = Database(settings.data_dir / "nubios.sqlite3")
@@ -25,6 +34,7 @@ class Assistant:
         self.tasks = TaskManager(self.db)
         self.memory = MemoryService(self.db)
         self.ai = ai
+        self.tts = tts or NoOpTTS()
 
     def handle(self, text: str) -> str:
         self.db.execute("INSERT INTO conversations(role, content) VALUES (?, ?)", ("user", text))
@@ -67,9 +77,23 @@ class Assistant:
             response = "I couldn't complete that action. Check the local logs for details."
             self.events.publish("assistant.action_failed", reason="internal_error")
         self.db.execute("INSERT INTO conversations(role, content) VALUES (?, ?)", ("assistant", response))
+        self._speak_async(response)
         audit(__import__("logging").getLogger("nubios"), "assistant.request", intent=intent.name, status="ok")
         self.events.publish("assistant.action_completed", intent=intent.name)
         return response
+
+    def _speak_async(self, text: str) -> None:
+        """Generate speech off the UI thread so cloud TTS never freezes NubiOS."""
+        worker = threading.Thread(target=self._speak_safe, args=(text,), daemon=True, name="nubios-tts")
+        worker.start()
+
+    def _speak_safe(self, text: str) -> None:
+        try:
+            self.tts.speak(text)
+            self.events.publish("assistant.tts_completed")
+        except Exception as exc:
+            audit(__import__("logging").getLogger("nubios"), "assistant.tts_failed", error=str(exc))
+            self.events.publish("assistant.tts_failed", reason="tts_error")
 
     def _require(self, permission: Permission) -> None:
         if not self.permissions.check(permission):
