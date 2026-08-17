@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from .ai.provider import LocalAIProvider, MockAIProvider
+from .ai.tts import ElevenLabsTTS, NoOpTTS
 from .config.settings import Settings
 from .core.assistant import Assistant
 from .core.logger import configure_logging
@@ -22,10 +23,19 @@ def main() -> int:
     else:
         provider = MockAIProvider()
 
+    tts = NoOpTTS()
+    if settings.tts_enabled and settings.tts_provider.casefold() == "elevenlabs" and settings.elevenlabs_api_key:
+        tts = ElevenLabsTTS(
+            api_key=settings.elevenlabs_api_key,
+            voice_id=settings.elevenlabs_voice_id,
+            model_id=settings.elevenlabs_model,
+            data_dir=settings.data_dir,
+        )
+
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("NubiOS")
-    assistant = Assistant(settings, provider)
+    assistant = Assistant(settings, provider, tts=tts)
     window = MainWindow(assistant)
     window.show()
     return app.exec()
