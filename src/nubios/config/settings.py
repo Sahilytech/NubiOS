@@ -15,6 +15,10 @@ class Settings:
     log_level: str = "INFO"
     theme: str = "dark"
     tts_enabled: bool = False
+    tts_provider: str = "none"
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = "fJ2BRu9MMKDzgQZh6OiH"
+    elevenlabs_model: str = "eleven_multilingual_v2"
     startup_enabled: bool = False
 
     @classmethod
@@ -32,5 +36,9 @@ class Settings:
             log_level=os.getenv("NUBIOS_LOG_LEVEL", "INFO"),
             theme=os.getenv("NUBIOS_THEME", "dark"),
             tts_enabled=os.getenv("NUBIOS_TTS", "false").lower() in {"1", "true", "yes", "on"},
+            tts_provider=os.getenv("NUBIOS_TTS_PROVIDER", "none"),
+            elevenlabs_api_key=os.getenv("ELEVENLABS_API_KEY", ""),
+            elevenlabs_voice_id=os.getenv("ELEVENLABS_VOICE_ID", "fJ2BRu9MMKDzgQZh6OiH"),
+            elevenlabs_model=os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
             startup_enabled=os.getenv("NUBIOS_STARTUP", "false").lower() in {"1", "true", "yes", "on"},
         )
