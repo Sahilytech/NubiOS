@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import subprocess
 import sys
@@ -24,12 +25,7 @@ class NoOpTTS(TTSProvider):
 
 
 class ElevenLabsTTS(TTSProvider):
-    """ElevenLabs Text-to-Speech backend for Nubi.
-
-    Uses the official HTTP API directly so NubiOS does not need an additional
-    runtime SDK dependency. The API key is read from the environment and is
-    never stored in the repository.
-    """
+    """ElevenLabs Text-to-Speech backend for Nubi."""
 
     API_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 
@@ -54,7 +50,6 @@ class ElevenLabsTTS(TTSProvider):
         text = text.strip()
         if not text:
             return b""
-
         url = f"{self.API_URL.format(voice_id=self.voice_id)}?output_format={self.output_format}"
         payload = (
             '{"text":' + _json_string(text)
@@ -84,7 +79,6 @@ class ElevenLabsTTS(TTSProvider):
         audio = self.synthesize(text)
         if not audio:
             return None
-
         suffix = ".mp3" if self.output_format.startswith("mp3") else ".audio"
         directory = self.data_dir / "tts" if self.data_dir else None
         if directory:
@@ -96,19 +90,28 @@ class ElevenLabsTTS(TTSProvider):
             handle.write(audio)
             handle.close()
             path = Path(handle.name)
-
         self.last_audio_path = path
         _play_audio(path)
 
 
 def _json_string(value: str) -> str:
     import json
-
     return json.dumps(value, ensure_ascii=False)
 
 
 def _play_audio(path: Path) -> None:
-    """Play generated audio without making playback a hard runtime dependency."""
+    """Play generated audio without requiring ffmpeg on Windows."""
+    if sys.platform == "win32":
+        alias = f"nubios_{os.getpid()}"
+        command = f'open "{path}" type mpegvideo alias {alias}'
+        try:
+            result = ctypes.windll.winmm.mciSendStringW(command, None, 0, None)
+            if result == 0:
+                ctypes.windll.winmm.mciSendStringW(f"play {alias} from 0", None, 0, None)
+                return
+        except (AttributeError, OSError):
+            pass
+
     try:
         subprocess.Popen(
             ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", str(path)],
