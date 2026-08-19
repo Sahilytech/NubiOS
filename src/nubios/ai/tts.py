@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ctypes
 import os
 import subprocess
 import sys
@@ -32,15 +31,17 @@ class ElevenLabsTTS(TTSProvider):
     def __init__(
         self,
         api_key: str,
-        voice_id: str = "fJ2BRu9MMKDzgQZh6OiH",
+        voice_id: str,
         model_id: str = "eleven_multilingual_v2",
         output_format: str = "mp3_44100_128",
         data_dir: Path | None = None,
     ) -> None:
         if not api_key.strip():
             raise ValueError("ElevenLabs API key is required")
+        if not voice_id.strip():
+            raise ValueError("ElevenLabs voice ID is required")
         self.api_key = api_key.strip()
-        self.voice_id = voice_id.strip() or "fJ2BRu9MMKDzgQZh6OiH"
+        self.voice_id = voice_id.strip()
         self.model_id = model_id
         self.output_format = output_format
         self.data_dir = data_dir
@@ -78,18 +79,21 @@ class ElevenLabsTTS(TTSProvider):
     def speak(self, text: str) -> None:
         audio = self.synthesize(text)
         if not audio:
-            return None
-        suffix = ".mp3" if self.output_format.startswith("mp3") else ".audio"
+            return
+
         directory = self.data_dir / "tts" if self.data_dir else None
         if directory:
             directory.mkdir(parents=True, exist_ok=True)
-            path = directory / "nubi_latest{0}".format(suffix)
+            # Use unique files so Windows' media subsystem never races with a file
+            # that another TTS request is still playing.
+            path = directory / f"nubi_{os.getpid()}_{next(tempfile._get_candidate_names())}.mp3"
             path.write_bytes(audio)
         else:
-            handle = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="nubi_")
+            handle = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", prefix="nubi_")
             handle.write(audio)
             handle.close()
             path = Path(handle.name)
+
         self.last_audio_path = path
         _play_audio(path)
 
@@ -100,16 +104,16 @@ def _json_string(value: str) -> str:
 
 
 def _play_audio(path: Path) -> None:
-    """Play generated audio without requiring ffmpeg on Windows."""
+    """Delegate MP3 playback to the user's Windows default media application.
+
+    This intentionally avoids ctypes/MCI calls because native multimedia calls can
+    terminate the Python process on some Windows audio configurations.
+    """
     if sys.platform == "win32":
-        alias = f"nubios_{os.getpid()}"
-        command = f'open "{path}" type mpegvideo alias {alias}'
         try:
-            result = ctypes.windll.winmm.mciSendStringW(command, None, 0, None)
-            if result == 0:
-                ctypes.windll.winmm.mciSendStringW(f"play {alias} from 0", None, 0, None)
-                return
-        except (AttributeError, OSError):
+            os.startfile(str(path))
+            return
+        except OSError:
             pass
 
     try:
@@ -118,12 +122,5 @@ def _play_audio(path: Path) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        return
     except (FileNotFoundError, OSError):
-        pass
-
-    if sys.platform == "win32":
-        try:
-            os.startfile(str(path))
-        except OSError:
-            pass
+        raise RuntimeError("No compatible audio player is available")
