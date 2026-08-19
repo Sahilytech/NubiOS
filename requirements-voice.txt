@@ -1,0 +1,3 @@
+# Optional voice input
+faster-whisper>=1.1
+sounddevice>=0.5
