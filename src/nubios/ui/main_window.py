@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow, QPushButton,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from ..ai.voice_controller import VoiceController
 from ..core.assistant import Assistant
 
 
@@ -17,16 +18,36 @@ QLabel#brand { font-size: 25px; font-weight: 700; padding: 8px 4px; }
 QLabel#muted { color: #8e99aa; }
 QPushButton { background: #171c27; border: 1px solid #283143; border-radius: 10px; padding: 10px 14px; }
 QPushButton:hover { background: #202737; }
+QPushButton:disabled { color: #667085; }
 QLineEdit, QTextEdit, QListWidget { background: #111620; border: 1px solid #283143; border-radius: 12px; padding: 10px; }
 QListWidget::item { padding: 9px; border-radius: 8px; }
 QListWidget::item:selected { background: #252d3d; }
 """
 
 
+class VoiceWorker(QThread):
+    """Run microphone capture and Whisper inference away from the UI thread."""
+
+    completed = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, voice: VoiceController) -> None:
+        super().__init__()
+        self.voice = voice
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(self.voice.listen_once())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
-    def __init__(self, assistant: Assistant) -> None:
+    def __init__(self, assistant: Assistant, voice: VoiceController | None = None) -> None:
         super().__init__()
         self.assistant = assistant
+        self.voice = voice
+        self.voice_worker: VoiceWorker | None = None
         self.setWindowTitle("NubiOS")
         self.resize(1180, 760)
         self.setStyleSheet(STYLE)
@@ -58,7 +79,13 @@ class MainWindow(QMainWindow):
 
     def chat(self) -> QWidget:
         w = QWidget(); l = self.heading("Chat", "Talk to Nubi or use deterministic desktop commands."); self.output = QTextEdit(); self.output.setReadOnly(True); l.addWidget(self.output, 1)
-        row = QHBoxLayout(); self.input = QLineEdit(); self.input.setPlaceholderText("Try: Open VS Code, show my tasks, find my project..."); send = QPushButton("Send"); send.clicked.connect(self.send); self.input.returnPressed.connect(self.send); row.addWidget(self.input, 1); row.addWidget(send); l.addLayout(row); w.setLayout(l); return w
+        row = QHBoxLayout(); self.input = QLineEdit(); self.input.setPlaceholderText("Try: Open VS Code, show my tasks, find my project..."); send = QPushButton("Send"); send.clicked.connect(self.send); self.input.returnPressed.connect(self.send); row.addWidget(self.input, 1); row.addWidget(send)
+        self.voice_button = QPushButton("Hablar")
+        self.voice_button.setToolTip("Graba hasta 6 segundos y transcribe con Whisper")
+        self.voice_button.setEnabled(self.voice is not None)
+        self.voice_button.clicked.connect(self.listen)
+        row.addWidget(self.voice_button)
+        l.addLayout(row); w.setLayout(l); return w
 
     def send(self) -> None:
         text = self.input.text().strip()
@@ -66,6 +93,36 @@ class MainWindow(QMainWindow):
         self.output.append(f"<b>You</b>  {text}"); self.input.setEnabled(False)
         try: response = self.assistant.handle(text); self.output.append(f"<b>Nubi</b>  {response}<br>")
         finally: self.input.clear(); self.input.setEnabled(True); self.input.setFocus()
+
+    def listen(self) -> None:
+        if self.voice is None or (self.voice_worker is not None and self.voice_worker.isRunning()):
+            return
+        self.voice_button.setEnabled(False)
+        self.voice_button.setText("Escuchando...")
+        self.input.setEnabled(False)
+        self.voice_worker = VoiceWorker(self.voice)
+        self.voice_worker.completed.connect(self.voice_completed)
+        self.voice_worker.failed.connect(self.voice_failed)
+        self.voice_worker.finished.connect(self.voice_finished)
+        self.voice_worker.start()
+
+    def voice_completed(self, text: str) -> None:
+        if not text:
+            self.output.append("<b>Nubi</b>  No detecté ninguna frase.<br>")
+            return
+        self.output.append(f"<b>You</b>  {text}")
+        response = self.assistant.handle(text)
+        self.output.append(f"<b>Nubi</b>  {response}<br>")
+
+    def voice_failed(self, message: str) -> None:
+        self.output.append(f"<b>Nubi</b>  No pude usar el micrófono: {message}<br>")
+
+    def voice_finished(self) -> None:
+        self.voice_button.setText("Hablar")
+        self.voice_button.setEnabled(self.voice is not None)
+        self.input.setEnabled(True)
+        self.input.setFocus()
+        self.voice_worker = None
 
     def tasks_view(self) -> QWidget:
         w = QWidget(); l = self.heading("Tasks", "Lightweight local task management."); self.task_list = QListWidget(); l.addWidget(self.task_list, 1); refresh = QPushButton("Refresh"); refresh.clicked.connect(self.refresh_tasks); l.addWidget(refresh); self.refresh_tasks(); w.setLayout(l); return w
