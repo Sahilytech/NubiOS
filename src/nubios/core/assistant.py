@@ -24,6 +24,7 @@ class Assistant:
         self.tasks = TaskManager(self.db)
         self.memory = MemoryService(self.db)
         self.ai = ai
+        self.voice = None  # Imported/initialized only when voice is actually requested.
         self.log = logging.getLogger("nubios.assistant")
 
     def handle(self, text: str) -> str:
@@ -68,3 +69,16 @@ class Assistant:
         self.db.execute("INSERT INTO conversations(role, content) VALUES (?, ?)", ("assistant", response))
         self.db.execute("INSERT INTO audit_log(event, details) VALUES (?, ?)", (intent.name, response[:500]))
         return response
+
+    def speak(self, text: str) -> str:
+        """Initialize the voice stack only when the user explicitly asks Nubi to speak."""
+        if self.voice is None:
+            from ..voice.service import VoiceService
+            self.voice = VoiceService(
+                enabled=self.settings.voice_enabled,
+                whisper_model=self.settings.whisper_model,
+                tts_provider=self.settings.tts_provider,
+                elevenlabs_api_key=self.settings.elevenlabs_api_key,
+                elevenlabs_voice_id=self.settings.elevenlabs_voice_id,
+            )
+        return self.voice.speak(text)
