@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import tempfile
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from urllib import error, request
@@ -16,7 +17,7 @@ class VoiceStatus:
 
 
 class VoiceService:
-    """Optional voice facade. Heavy voice imports are lazy and never run at startup."""
+    """Optional voice facade. Microphone/Whisper imports are lazy."""
 
     def __init__(self, enabled: bool = False, whisper_model: str = "tiny", tts_provider: str = "none", elevenlabs_api_key: str = "", elevenlabs_voice_id: str = "") -> None:
         self.enabled = enabled
@@ -29,14 +30,47 @@ class VoiceService:
     def status(self) -> VoiceStatus:
         if not self.enabled:
             return VoiceStatus(False, "Voice is disabled")
-        if self.tts_provider == "elevenlabs" and self.elevenlabs_api_key and self.elevenlabs_voice_id:
-            return VoiceStatus(True, "ElevenLabs TTS ready")
         try:
-            import sounddevice  # noqa: F401
+            import sounddevice
+            devices = sounddevice.query_devices()
+            input_devices = [d for d in devices if d.get("max_input_channels", 0) > 0]
+            if not input_devices:
+                return VoiceStatus(False, "No microphone input device was detected")
             import faster_whisper  # noqa: F401
         except ImportError as exc:
             return VoiceStatus(False, f"Voice dependencies unavailable: {exc.name}")
-        return VoiceStatus(True, "Whisper input ready")
+        except Exception as exc:
+            return VoiceStatus(False, f"Microphone unavailable: {exc}")
+        return VoiceStatus(True, f"Microphone ready: {input_devices[0]['name']}")
+
+    def record_and_transcribe(self, seconds: float = 5.0, samplerate: int = 16000) -> str:
+        if not self.enabled:
+            raise RuntimeError("Voice input is disabled")
+        import sounddevice as sd
+
+        devices = sd.query_devices()
+        input_devices = [d for d in devices if d.get("max_input_channels", 0) > 0]
+        if not input_devices:
+            raise RuntimeError("No microphone input device was detected by Windows")
+
+        try:
+            default_input = sd.default.device[0]
+            if default_input is None or int(default_input) < 0:
+                default_input = None
+            if default_input is not None:
+                sd.check_input_settings(device=default_input, samplerate=samplerate, channels=1, dtype="int16")
+            recording = sd.rec(int(seconds * samplerate), samplerate=samplerate, channels=1, dtype="int16", blocking=True)
+            sd.wait()
+        except Exception as exc:
+            raise RuntimeError(f"Microphone capture failed: {exc}") from exc
+
+        path = Path(tempfile.gettempdir()) / "nubios_mic.wav"
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(samplerate)
+            wav.writeframes(recording.tobytes())
+        return self.transcribe_file(str(path))
 
     def transcribe_file(self, path: str) -> str:
         if not self.enabled:
