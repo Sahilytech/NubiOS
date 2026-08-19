@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+from dotenv import load_dotenv
+
 from .ai.provider import LocalAIProvider, MockAIProvider
 from .ai.tts import ElevenLabsTTS, NoOpTTS
 from .ai.voice_controller import VoiceController
@@ -12,6 +14,9 @@ from .ui.main_window import MainWindow
 
 
 def main() -> int:
+    # Load local configuration before Settings.from_env(). The .env file is
+    # intentionally ignored by Git and may contain provider credentials.
+    load_dotenv()
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
     settings = Settings.from_env()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
