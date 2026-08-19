@@ -4,6 +4,7 @@ import os
 
 from .ai.provider import LocalAIProvider, MockAIProvider
 from .ai.tts import ElevenLabsTTS, NoOpTTS
+from .ai.voice_controller import VoiceController
 from .config.settings import Settings
 from .core.assistant import Assistant
 from .core.logger import configure_logging
@@ -32,11 +33,13 @@ def main() -> int:
             data_dir=settings.data_dir,
         )
 
+    voice = VoiceController()
+
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("NubiOS")
     assistant = Assistant(settings, provider, tts=tts)
-    window = MainWindow(assistant)
+    window = MainWindow(assistant, voice=voice)
     window.show()
     return app.exec()
 
